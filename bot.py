@@ -12,7 +12,6 @@ logging.basicConfig(
 
 TOKEN = os.environ.get('BOT_TOKEN')
 
-# আপলোড করা কুকি ফাইলগুলোর তালিকা
 COOKIE_FILES = ['cookie1.txt']
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -54,12 +53,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     output_filename = "downloaded_media.%(ext)s"
 
-    # র্যান্ডমলি কুকি ফাইল নির্বাচন (Cookie Rotation)
     selected_cookie = random.choice(COOKIE_FILES)
 
+    # সব ধরণের ভিডিও/মেডিয়ার জন্য ফ্লেক্সিবল ফরম্যাট রুলস
     ydl_opts = {
         'cookiefile': selected_cookie,
-        'format': 'bestaudio/best' if download_type == 'audio' else 'best[filesize<45M]/worst',
+        'format': 'bestaudio/best' if download_type == 'audio' else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': output_filename,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         'extractor_args': {
