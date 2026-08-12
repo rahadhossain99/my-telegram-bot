@@ -1,5 +1,5 @@
 python-telegram-bot>=21.0
-yt-dlp
+yt-dlp>=2024.03.10
 static-ffmpeg
 Pillow
 opencv-python-headless
