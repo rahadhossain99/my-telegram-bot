@@ -78,7 +78,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 **স্বাগতম!**\n\n"
         "আমি একটি অল-ইন-ওয়ান মিডিয়া ডাউনলোডার ও প্রসেসিং বট।\n\n"
         "🎬 **ভিডিও/অডিও:** YouTube, Facebook, Instagram, TikTok ইত্যাদির যেকোনো লিংক পাঠাও।\n"
-        "🖼️ **ছবি প্রসেসিং:** যেকোনো ছবি পাঠাও এনহান্স করার জন্য।",
+        "🖼️ **ছবি প্রসেসিং:** যেকোনো ছবি পাঠাও এনহ্যান্স করার জন্য।",
         reply_markup=reply_markup
     )
 
@@ -123,7 +123,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.message.reply_text("💡 আমাকে যেকোনো ভিডিওর লিংক পাঠাও, আমি অডিও বা ভিডিও আকারে নামিয়ে দেব।")
         return
     elif action == "help_img":
-        await query.message.reply_text("💡 আমাকে যেকোনো ছবি পাঠাও, আমি শার্পেন ও কালার এনহান্স করে দেব।")
+        await query.message.reply_text("💡 আমাকে যেকোনো ছবি পাঠাও, আমি শার্পেন ও কালার এনহ্যান্স করে দেব।")
         return
 
     if action != "dl":
@@ -141,16 +141,18 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     file_path = None
     try:
-        # YouTube IP Block Bypass + yt-dlp Configuration
+        # YouTube IP Block Bypass + yt-dlp Configuration - আপডেটেড
         ydl_opts = {
             'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
             'noplaylist': True,
-            'quiet': True,
-            'no_warnings': True,
+            'quiet': False,  # ডিবাগের জন্য True রাখা হয়েছে
+            'no_warnings': False,  # ওয়ার্নিং দেখার জন্য
+            'ignoreerrors': True,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'ios', 'mweb']
+                    'player_client': ['android', 'ios', 'mweb'],
+                    'skip': ['hls', 'dash'],  # HLS এবং DASH স্কিপ করে সরাসরি ফরম্যাট ডাউনলোড
                 }
             }
         }
@@ -159,7 +161,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         if os.path.exists(COOKIES_FILE):
             ydl_opts['cookiefile'] = COOKIES_FILE
 
-        # ভিডিও অথবা অডিও ফরম্যাট সিলেক্ট
+        # ভিডিও অথবা অডিও ফরম্যাট সিলেক্ট - আপডেটেড
         if format_type == 'audio':
             ydl_opts['format'] = 'bestaudio/best'
             ydl_opts['postprocessors'] = [{
@@ -168,24 +170,37 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 'preferredquality': '192',
             }]
         else:
-            ydl_opts['format'] = 'best[height<=720][ext=mp4]/bestvideo[height<=720]+bestaudio/best'
+            # YouTube এর নতুন ফরম্যাট সিস্টেমের সাথে সামঞ্জস্যপূর্ণ
+            ydl_opts['format'] = 'bestvideo[height<=720][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=720][ext=mp4]/best'
             ydl_opts['merge_output_format'] = 'mp4'
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
+            
+            # ফাইল নাম সঠিকভাবে বের করা
             filename = ydl.prepare_filename(info)
-
             base_name = os.path.splitext(filename)[0]
+            
             if format_type == 'audio':
                 file_path = f"{base_name}.mp3"
             else:
-                file_path = f"{base_name}.mp4" if os.path.exists(f"{base_name}.mp4") else filename
+                # ভিডিও ফাইল চেক করা
+                possible_extensions = ['.mp4', '.webm', '.mkv']
+                file_path = None
+                for ext in possible_extensions:
+                    test_path = f"{base_name}{ext}"
+                    if os.path.exists(test_path):
+                        file_path = test_path
+                        break
+                
+                # যদি না পাওয়া যায়, তাহলে ডিরেক্টরি থেকে ফাইল খোঁজা
+                if not file_path:
+                    files = glob.glob(f"{DOWNLOAD_DIR}/*")
+                    if files:
+                        # সবচেয়ে নতুন ফাইল নির্বাচন
+                        file_path = max(files, key=os.path.getmtime)
 
             title = info.get('title', 'Downloaded Media')
-
-        if not os.path.exists(file_path):
-            files = glob.glob(f"{DOWNLOAD_DIR}/*")
-            file_path = files[0] if files else None
 
         if not file_path or not os.path.exists(file_path):
             await query.edit_message_text("❌ ফাইল ডাউনলোড করতে ব্যর্থ হয়েছে।")
@@ -218,7 +233,16 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     except Exception as e:
         logger.error(f"ডাউনলোড এরর: {e}")
-        await query.edit_message_text(f"❌ **ডাউনলোড সমস্যা!**\n\nকারণ: `{str(e)[:150]}`")
+        error_msg = str(e)
+        # ইউজার-বান্ধব এরর মেসেজ
+        if "Requested format is not available" in error_msg:
+            await query.edit_message_text(
+                "❌ **ভিডিও ফরম্যাট পাওয়া যায়নি!**\n\n"
+                "YouTube তাদের ফরম্যাট পরিবর্তন করেছে। আমি অন্য ফরম্যাটে চেষ্টা করছি...\n"
+                "অনুগ্রহ করে আবার চেষ্টা করুন অথবা অন্য একটি ভিডিও দিয়ে চেক করুন।"
+            )
+        else:
+            await query.edit_message_text(f"❌ **ডাউনলোড সমস্যা!**\n\nকারণ: `{error_msg[:150]}`")
 
     finally:
         cleanup_memory()
