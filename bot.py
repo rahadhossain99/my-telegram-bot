@@ -67,50 +67,48 @@ def cleanup_memory():
 
 
 def is_terabox_url(url: str) -> bool:
-    """টেরাবক্সের লিংক শনাক্ত করার ফাংশন"""
-    terabox_domains = [
-        'terabox.com', 'teraboxapp.com', '1024tera.com', 
-        'freeterabox.com', 'mirrobox.com', 'neptunebox.com', 'momerybox.com'
+    """টেরাবক্সের সমস্ত ডোমেইন ও অল্টারনেটিভ লিংক শনাক্ত করার ফাংশন"""
+    terabox_keywords = [
+        'terabox', '1024tera', 'freeterabox', 'mirrobox', 
+        'neptunebox', 'momerybox', 'terasharefile', 'tibbox', 
+        'teraboxlink', '4shared'
     ]
-    return any(domain in url.lower() for domain in terabox_domains)
+    url_lower = url.lower()
+    return any(keyword in url_lower for keyword in terabox_keywords)
 
 
 def get_terabox_download_link(url: str):
-    """TeraBox API থেকে ভিডিওর ডিরেক্ট ডাউনলোড লিংক ও তথ্য বের করার ফাংশন"""
-    api_endpoints = [
-        f"https://terabox-dl.qtcloud.workers.dev/api/get-info?shorturl={url.split('/')[-1]}",
-        f"https://api.freeterabox.com/api/get-info?url={url}"
-    ]
-    
+    """TeraBox API থেকে ভিডিওর ডিরেক্ট ডাউনলোড লিংক বের করার ফাংশন"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     }
+
+    # শর্ট কোড বের করা (যেমন: terasharefile.com/s/1Q41XDdeAOQZJqDiWMBqq6A)
+    match = re.search(r'/(?:s/|surl=)?([a-zA-Z0-9_-]+)', url)
+    shortcode = match.group(1) if match else url.split('/')[-1]
+
+    # Multiple Fallback APIs for TeraBox
+    api_endpoints = [
+        f"https://terabox-dl.qtcloud.workers.dev/api/get-info?shorturl={shortcode}",
+        f"https://terabox.videodownloader.workers.dev/?url={url}",
+        f"https://api.freeterabox.com/api/get-info?url={url}"
+    ]
 
     for endpoint in api_endpoints:
         try:
             res = requests.get(endpoint, headers=headers, timeout=15)
             if res.status_code == 200:
                 data = res.json()
-                if "downloadLink" in data:
+                if "downloadLink" in data and data["downloadLink"]:
                     return data["downloadLink"], data.get("fileName", "Terabox_Video.mp4")
+                elif "url" in data and data["url"]:
+                    return data["url"], data.get("title", "Terabox_Video.mp4")
                 elif "list" in data and len(data["list"]) > 0:
                     item = data["list"][0]
                     return item.get("dlink"), item.get("filename", "Terabox_Video.mp4")
         except Exception as e:
             logger.warning(f"TeraBox API Error ({endpoint}): {e}")
             continue
-
-    # থার্ড-পার্টি সার্ভিস ফলব্যাক API
-    try:
-        terabox_api = f"https://yt-video-download-api.p.rapidapi.com/dl?id={url}"
-        # অন্য একটি ওপেন সোর্স API ট্রাই
-        res = requests.get(f"https://terabox.videodownloader.workers.dev/?url={url}", timeout=15)
-        if res.status_code == 200:
-            data = res.json()
-            if "url" in data:
-                return data["url"], data.get("title", "Terabox_Video.mp4")
-    except Exception:
-        pass
 
     return None, None
 
@@ -128,8 +126,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 **স্বাগতম!**\n\n"
         "আমি একটি অল-ইন-ওয়ান মিডিয়া ডাউনলোডার বট।\n\n"
-        "🎬 **সমর্থিত প্ল্যাটফর্ম:** YouTube, TeraBox, Facebook, Instagram, TikTok ইত্যাদি।\n"
-        "🖼️ **ছবি প্রসেসিং:** যেকোনো ছবি পাঠাও এনহ্যান্স বা শার্পেন করার জন্য।",
+        "🎬 **সমর্থিত প্ল্যাটফর্ম:** YouTube, TeraBox (terasharefile), Facebook, Instagram, TikTok ইত্যাদি।\n"
+        "🖼️ **ছবি প্রসেসিং:** যেকোনো ছবি পাঠাও এনহ্যান্স করার জন্য।",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
@@ -146,7 +144,7 @@ async def handle_url_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_id = str(update.message.message_id)
     context.user_data[msg_id] = url
 
-    # লিংক যদি TeraBox-এর হয়
+    # TeraBox ডিটেক্ট করা
     if is_terabox_url(url):
         keyboard = [
             [
@@ -210,7 +208,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             file_path = os.path.join(DOWNLOAD_DIR, file_name or "terabox_video.mp4")
             
-            # স্ট্রিম ডাউনলোড (র‍্যাম বাঁচানোর জন্য চাঙ্ক বাই চাঙ্ক)
+            # স্ট্রিম ডাউনলোড (র‍্যাম বাঁচানোর জন্য চাঙ্ক আকারে)
             with requests.get(direct_link, stream=True, timeout=30) as r:
                 r.raise_for_status()
                 with open(file_path, 'wb') as f:
@@ -219,7 +217,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             
             title = file_name or "TeraBox Video"
 
-        # YouTube এবং অন্যান্য সোশ্যাল মিডিয়া ডাউনলোড লজিক
+        # YouTube এবং অন্যান্য ভিডিও ডাউনলোড লজিক
         else:
             ydl_opts = {
                 'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
@@ -250,6 +248,9 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
+                if not info:
+                    raise Exception("ভিডিওর তথ্য পাওয়া যায়নি। লিংকটি ভুল হতে পারে।")
+
                 filename = ydl.prepare_filename(info)
                 base_name = os.path.splitext(filename)[0]
 
@@ -268,12 +269,12 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.edit_message_text("❌ ফাইল ডাউনলোড করতে ব্যর্থ হয়েছে।")
             return
 
-        # টেলিগ্রাম বট API-এর ৫০ MB সীমা পরীক্ষা
+        # ৫০ MB চেক (টেলিগ্রাম ফ্রি লিমিট)
         file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
         if file_size_mb > 50:
             await query.edit_message_text(
                 f"⚠️ **ফাইলের সাইজ অনেক বড় ({file_size_mb:.1f} MB)!**\n\n"
-                "টেলিগ্রাম ফ্রি বটের সীমাবদ্ধতার কারণে ৫০ MB-এর বেশি বড় ফাইল টেলিগ্রামে পাঠানো যায় না।",
+                "টেলিগ্রাম ফ্রি বটের সীমাবদ্ধতার কারণে ৫০ MB-এর চেয়ে বড় ফাইল সরাসরি পাঠানো যায় না।",
                 parse_mode="Markdown"
             )
             return
@@ -312,7 +313,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_image_processing(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ইমেজ প্রসেসিং হ্যান্ডলার"""
+    """ইমেজ প্রসেস করার ফাংশন"""
     status_msg = await update.message.reply_text("🎨 **ছবি প্রসেস করা হচ্ছে...**", parse_mode="Markdown")
 
     input_path = f"{DOWNLOAD_DIR}/input_{update.message.message_id}.jpg"
@@ -357,7 +358,7 @@ async def handle_image_processing(update: Update, context: ContextTypes.DEFAULT_
 
 
 def main():
-    """মূল চালিকা ফাংশন"""
+    """প্রধান রানার ফাংশন"""
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN সেট করা হয়নি!")
         return
