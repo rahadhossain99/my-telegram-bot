@@ -1,8 +1,8 @@
 import os
-import requests
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+import yt_dlp
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -14,7 +14,7 @@ TOKEN = os.environ.get('BOT_TOKEN')
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 **YouTube Downloader Bot-এ স্বাগতম!**\n\n"
-        "যেকোনো YouTube ভিডিও বা Shorts-এর লিংক পাঠালে আমি তা ডাউনলোড করে দেব।"
+        "যেকোনো YouTube ভিডিও বা Shorts-এর লিংক পাঠালে আমি ডাউনলোড করে দেব।"
     )
 
 async def handle_youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -28,8 +28,8 @@ async def handle_youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     keyboard = [
         [
-            InlineKeyboardButton("🎬 Download Video", callback_data='video'),
-            InlineKeyboardButton("🎵 Download Audio", callback_data='audio')
+            InlineKeyboardButton("🎬 Video", callback_data='video'),
+            InlineKeyboardButton("🎵 Audio MP3", callback_data='audio')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -48,52 +48,39 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text("⏳ প্রসেস করা হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...")
 
-    # Cobalt API চেষ্টা করা
-    cobalt_api = "https://api.cobalt.tools/api/json"
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "url": url,
-        "isAudioOnly": True if download_type == 'audio' else False
+    output_filename = "downloaded_media.%(ext)s"
+
+    # YouTube Bot Block Bypass Configuration
+    ydl_opts = {
+        'format': 'bestaudio/best' if download_type == 'audio' else 'best[filesize<45M]/worst',
+        'outtmpl': output_filename,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['mweb', 'ios', 'android_vr']
+            }
+        }
     }
 
     try:
-        response = requests.post(cobalt_api, json=payload, headers=headers, timeout=15)
-        data = response.json()
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
 
-        download_url = None
-        if data.get("status") in ["tunnel", "redirect", "picker"]:
-            download_url = data.get("url")
-            if not download_url and data.get("picker"):
-                download_url = data["picker"][0].get("url")
+        await query.edit_message_text("📤 ফাইল টেলিগ্রামে পাঠানো হচ্ছে...")
 
-        if download_url:
-            await query.edit_message_text("📤 ফাইল ডাউনলোড হয়ে টেলিগ্রামে পাঠানো হচ্ছে...")
+        with open(filename, 'rb') as file_data:
+            if download_type == 'audio':
+                await query.message.reply_audio(audio=file_data)
+            else:
+                await query.message.reply_video(video=file_data)
 
-            media_res = requests.get(download_url, stream=True, timeout=30)
-            file_name = "audio.mp3" if download_type == 'audio' else "video.mp4"
-
-            with open(file_name, "wb") as f:
-                for chunk in media_res.iter_content(chunk_size=1024*1024):
-                    if chunk:
-                        f.write(chunk)
-
-            with open(file_name, "rb") as f:
-                if download_type == 'audio':
-                    await query.message.reply_audio(audio=f)
-                else:
-                    await query.message.reply_video(video=f)
-
-            if os.path.exists(file_name):
-                os.remove(file_name)
-            await query.delete_message()
-        else:
-            await query.edit_message_text("❌ সার্ভার থেকে ফাইল পাওয়া যায়নি। অন্য ভিডিওর লিংক চেষ্টা করুন।")
+        if os.path.exists(filename):
+            os.remove(filename)
+        await query.delete_message()
 
     except Exception as e:
-        await query.edit_message_text(f"❌ ডাউনলোড প্রসেসে সমস্যা হয়েছে: {str(e)}")
+        await query.edit_message_text(f"❌ ডাউনলোড করতে সমস্যা হয়েছে।\n\nকারণ: {str(e)}")
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
@@ -101,6 +88,6 @@ if __name__ == '__main__':
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_youtube_link))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot is running...")
+    print("Bot starting...")
     app.run_polling()
     
