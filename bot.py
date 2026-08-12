@@ -2,13 +2,19 @@ import os
 import glob
 import gc
 import logging
-import requests
 import numpy as np
 import cv2
 from PIL import Image
 import static_ffmpeg
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
+    ContextTypes,
+)
 import yt_dlp
 
 # Render-এর 512MB RAM রক্ষা করতে OpenCV থ্রেড লিমিট ১ রাখা হলো
@@ -30,6 +36,13 @@ logger = logging.getLogger(__name__)
 # বটের কনফিগারেশন
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DOWNLOAD_DIR = "downloads"
+COOKIES_FILE = "cookies.txt"
+
+# যদি Environment Variable-এ Cookies থাকে, তবে cookies.txt তৈরি করা
+YOUTUBE_COOKIES = os.getenv("YOUTUBE_COOKIES")
+if YOUTUBE_COOKIES and not os.path.exists(COOKIES_FILE):
+    with open(COOKIES_FILE, "w") as f:
+        f.write(YOUTUBE_COOKIES)
 
 # ডাউনলোড ডিরেক্টরি না থাকলে তৈরি করা
 if not os.path.exists(DOWNLOAD_DIR):
@@ -48,136 +61,204 @@ def cleanup_memory():
     except Exception as e:
         logger.error(f"ক্লিনআপ এরর: {e}")
     finally:
-        # পাইথন গারবেজ কালেকশন দিয়ে সাথে সাথেই RAM খালি করা
         gc.collect()
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """স্টার্ট কমান্ড হ্যান্ডলার"""
+    """স্টার্ট কমান্ড হ্যান্ডলার (ইনলাইন বাটন সহ)"""
+    keyboard = [
+        [
+            InlineKeyboardButton("🌐 যেকোনো লিংক পাঠাও", callback_data="help_link"),
+            InlineKeyboardButton("🖼️ ছবি ফিল্টার", callback_data="help_img")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     await update.message.reply_text(
         "👋 **স্বাগতম!**\n\n"
         "আমি একটি অল-ইন-ওয়ান মিডিয়া ডাউনলোডার ও প্রসেসিং বট।\n\n"
-        "🎬 **ভিডিও/অডিও ডাউনলোড:** YouTube, Facebook, Instagram, Twitter/X, TikTok ইত্যাদির যেকোনো লিংক পাঠাও।\n"
-        "🖼️ **ইমেজ প্রসেসিং:** যেকোনো ছবি পাঠাও ফিল্টার করার জন্য।"
+        "🎬 **ভিডিও/অডিও:** YouTube, Facebook, Instagram, TikTok ইত্যাদির যেকোনো লিংক পাঠাও।\n"
+        "🖼️ **ছবি প্রসেসিং:** যেকোনো ছবি পাঠাও এনহান্স করার জন্য।",
+        reply_markup=reply_markup
     )
 
 
-async def handle_media_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """YouTube, Facebook, Instagram, Twitter ইত্যাদি প্ল্যাটফর্মের ভিডিও ডাউনলোডের লজিক"""
+async def handle_url_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ইউজার লিংক পাঠালে অপশন বাটন দেখানোর ফাংশন"""
     url = update.message.text.strip()
 
-    # সাধারণ URL ভ্যালিডেশন (যেকোনো বৈধ লিংকের জন্য)
     if not (url.startswith("http://") or url.startswith("https://")):
-        await update.message.reply_text("❌ এটি সঠিক কোনো লিংক নয়! অনুগ্রহ করে একটি বৈধ URL পাঠাও।")
+        await update.message.reply_text("❌ এটি সঠিক কোনো লিংক নয়! অনুগ্রহ করে সঠিক URL পাঠাও।")
         return
 
-    status_msg = await update.message.reply_text("⏳ **ভিডিও প্রসেস করা হচ্ছে...**\nঅনুগ্রহ করে অপেক্ষা করো।")
+    msg_id = str(update.message.message_id)
+    # ইউজার ডাটাতে লিংক সেভ রাখা
+    context.user_data[msg_id] = url
+
+    # ইনলাইন ইন্টারঅ্যাক্টিভ বাটন তৈরি
+    keyboard = [
+        [
+            InlineKeyboardButton("🎬 ভিডিও (MP4)", callback_data=f"dl|video|{msg_id}"),
+            InlineKeyboardButton("🎵 অডিও (MP3)", callback_data=f"dl|audio|{msg_id}"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "📥 **তুমি কোনটি ডাউনলোড করতে চাও?**\nনিচের বাটন থেকে নির্বাচন করো:",
+        reply_markup=reply_markup,
+        reply_to_message_id=update.message.message_id
+    )
+
+
+async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ইনলাইন বাটনে ক্লিক করলে ডাউনলোড প্রসেস করা"""
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data.split("|")
+    action = data[0]
+
+    if action == "help_link":
+        await query.message.reply_text("💡 আমাকে যেকোনো ভিডিওর লিংক পাঠাও, আমি অডিও বা ভিডিও আকারে নামিয়ে দেব।")
+        return
+    elif action == "help_img":
+        await query.message.reply_text("💡 আমাকে যেকোনো ছবি পাঠাও, আমি শার্পেন ও কালার এনহান্স করে দেব।")
+        return
+
+    if action != "dl":
+        return
+
+    format_type = data[1] # 'video' or 'audio'
+    msg_id = data[2]
+    url = context.user_data.get(msg_id)
+
+    if not url:
+        await query.edit_message_text("❌ লিংকের মেয়াদ শেষ হয়ে গেছে। অনুগ্রহ করে লিংকটি পুনরায় পাঠাও।")
+        return
+
+    await query.edit_message_text(f"⏳ **{format_type.upper()} প্রসেস করা হচ্ছে...**\nঅনুগ্রহ করে কিছু সময় অপেক্ষা করো।")
 
     file_path = None
     try:
-        # Render-এ RAM বাঁচানো এবং YouTube IP Block এড়ানোর জন্য অপটিমাইজড yt-dlp সেটিংস
+        # YouTube IP Block Bypass + yt-dlp Configuration
         ydl_opts = {
-            'format': 'best[height<=720][ext=mp4]/bestvideo[height<=720]+bestaudio/best',
             'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
-            'merge_output_format': 'mp4',
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
-            # YouTube Bot Detection বাইপাস করার জন্য
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['ios', 'mweb', 'android']
+                    'player_client': ['android', 'ios', 'mweb']
                 }
             }
         }
+
+        # কুকি ফাইল থাকলে যুক্ত করা (YouTube Bot Block বাইপাস করার জন্য)
+        if os.path.exists(COOKIES_FILE):
+            ydl_opts['cookiefile'] = COOKIES_FILE
+
+        # ভিডিও অথবা অডিও ফরম্যাট সিলেক্ট
+        if format_type == 'audio':
+            ydl_opts['format'] = 'bestaudio/best'
+            ydl_opts['postprocessors'] = [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }]
+        else:
+            ydl_opts['format'] = 'best[height<=720][ext=mp4]/bestvideo[height<=720]+bestaudio/best'
+            ydl_opts['merge_output_format'] = 'mp4'
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
 
             base_name = os.path.splitext(filename)[0]
-            if os.path.exists(f"{base_name}.mp4"):
-                file_path = f"{base_name}.mp4"
-            elif os.path.exists(filename):
-                file_path = filename
+            if format_type == 'audio':
+                file_path = f"{base_name}.mp3"
             else:
-                files = glob.glob(f"{DOWNLOAD_DIR}/*")
-                file_path = files[0] if files else None
+                file_path = f"{base_name}.mp4" if os.path.exists(f"{base_name}.mp4") else filename
 
-            title = info.get('title', 'Downloaded Video')
+            title = info.get('title', 'Downloaded Media')
+
+        if not os.path.exists(file_path):
+            files = glob.glob(f"{DOWNLOAD_DIR}/*")
+            file_path = files[0] if files else None
 
         if not file_path or not os.path.exists(file_path):
-            await status_msg.edit_text("❌ ফাইলটি ডাউনলোড সফল হয়নি বা খুঁজে পাওয়া যায়নি।")
+            await query.edit_message_text("❌ ফাইল ডাউনলোড করতে ব্যর্থ হয়েছে।")
             return
 
-        # ফাইল সাইজ চেক (টেলিগ্রাম ফ্রি বটের সীমা: ৫০ MB)
+        # ৫০ MB চেক (টেলিগ্রামের লিমিট)
         file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
         if file_size_mb > 50:
-            await status_msg.edit_text(
-                f"⚠️ **ভিডিওটির সাইজ বড় ({file_size_mb:.1f} MB)!**\n"
+            await query.edit_message_text(
+                f"⚠️ **ফাইলের সাইজ অনেক বড় ({file_size_mb:.1f} MB)!**\n"
                 "টেলিগ্রাম ফ্রি বটের সীমাবদ্ধতার কারণে ৫০ MB-এর চেয়ে বড় ফাইল পাঠানো যায় না।"
             )
             return
 
-        await status_msg.edit_text("📤 **টেলিগ্রামে ভিডিও আপলোড হচ্ছে...**")
+        await query.edit_message_text("📤 **টেলিগ্রামে আপলোড হচ্ছে...**")
 
-        with open(file_path, 'rb') as video_file:
-            await update.message.reply_video(
-                video=video_file,
-                caption=f"🎥 **{title}**\n\n✅ ডাউনলোড সম্পন্ন!"
-            )
+        with open(file_path, 'rb') as media_file:
+            if format_type == 'audio':
+                await query.message.reply_audio(
+                    audio=media_file,
+                    caption=f"🎵 **{title}**\n\n✅ অডিও ডাউনলোড সম্পন্ন!"
+                )
+            else:
+                await query.message.reply_video(
+                    video=media_file,
+                    caption=f"🎥 **{title}**\n\n✅ ভিডিও ডাউনলোড সম্পন্ন!"
+                )
 
-        await status_msg.delete()
+        await query.delete_message()
 
     except Exception as e:
         logger.error(f"ডাউনলোড এরর: {e}")
-        await status_msg.edit_text(f"❌ **ডাউনলোড হতে সমস্যা হয়েছে!**\n\nকারণ: `{str(e)[:150]}`")
+        await query.edit_message_text(f"❌ **ডাউনলোড সমস্যা!**\n\nকারণ: `{str(e)[:150]}`")
 
     finally:
         cleanup_memory()
 
 
 async def handle_image_processing(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """মেমোরি সেফ ইমেজ প্রসেসিং (OpenCV, Pillow ও NumPy সহ)"""
+    """ইমেজ প্রসেস করার ফাংশন"""
     status_msg = await update.message.reply_text("🎨 **ছবি প্রসেস করা হচ্ছে...**")
 
     input_path = f"{DOWNLOAD_DIR}/input_{update.message.message_id}.jpg"
     output_path = f"{DOWNLOAD_DIR}/output_{update.message.message_id}.jpg"
 
     try:
-        # ছবি ডাউনলোড
         photo_file = await update.message.photo[-1].get_file()
         await photo_file.download_to_drive(input_path)
 
         img = cv2.imread(input_path)
         if img is None:
-            await status_msg.edit_text("❌ ছবি রিড করতে ব্যর্থ হয়েছে।")
+            await status_msg.edit_text("❌ ছবি পড়া সম্ভব হয়নি।")
             return
 
-        # RAM বাঁচানোর জন্য ছবি বড় হলে স্কেলিং করে ছোট করা
         h, w = img.shape[:2]
         max_dim = 1280
         if max(h, w) > max_dim:
             scale = max_dim / float(max(h, w))
             img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
-        # ইমেজ প্রসেসিং (শার্পেনিং ও ফিল্টারিং)
         kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
         sharpened = cv2.filter2D(img, -1, kernel)
 
         pil_img = Image.fromarray(cv2.cvtColor(sharpened, cv2.COLOR_BGR2RGB))
         pil_img.save(output_path, quality=90)
 
-        # প্রসেস করা ছবি ইউজারকে পাঠানো
         with open(output_path, 'rb') as photo:
             await update.message.reply_photo(
                 photo=photo,
-                caption="✨ **ছবি প্রসেস করা হয়েছে!** (Sharpened & Enhanced)"
+                caption="✨ **ছবি প্রসেস সম্পন্ন!** (Sharpened & Enhanced)"
             )
 
         await status_msg.delete()
-
         del img, sharpened, pil_img
 
     except Exception as e:
@@ -189,16 +270,17 @@ async def handle_image_processing(update: Update, context: ContextTypes.DEFAULT_
 
 
 def main():
-    """বট চালুর প্রধান ফাংশন"""
+    """প্রধান রানার ফাংশন"""
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN সেট করা হয়নি!")
         return
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # হ্যান্ডলার যুক্ত করা
+    # হ্যান্ডলারসমূহ
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_media_download))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url_input))
+    app.add_handler(CallbackQueryHandler(handle_button_click))
     app.add_handler(MessageHandler(filters.PHOTO, handle_image_processing))
 
     logger.info("বট চালু হচ্ছে...")
