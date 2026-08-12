@@ -1,6 +1,6 @@
 import os
-import gc
 import glob
+import gc
 import logging
 import requests
 import numpy as np
@@ -14,7 +14,7 @@ import yt_dlp
 # Render-এর 512MB RAM রক্ষা করতে OpenCV থ্রেড লিমিট ১ রাখা হলো
 cv2.setNumThreads(1)
 
-# ffmpeg এনভায়রনমেন্ট পাথ নিশ্চিত করা
+# ffmpeg এনভায়রনমেন্ট পাথ নিশ্চিত করা
 try:
     static_ffmpeg.add_paths()
 except Exception as e:
@@ -31,17 +31,20 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DOWNLOAD_DIR = "downloads"
 
-# ডাউনলোড ডিরেক্টরি না থাকলে তৈরি করবে
+# ডাউনলোড ডিরেক্টরি না থাকলে তৈরি করা
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def cleanup_memory():
-    """মেমোরি (RAM) ও অপ্রয়োজনীয় ফাইল ক্লিনআপের ফাংশন"""
+    """মেমোরি (RAM) ও অপ্রয়োজনীয় ফাইল ক্লিনআপের ফাংশন"""
     try:
         for file in glob.glob(f"{DOWNLOAD_DIR}/*"):
             if os.path.exists(file):
-                os.remove(file)
+                try:
+                    os.remove(file)
+                except Exception:
+                    pass
     except Exception as e:
         logger.error(f"ক্লিনআপ এরর: {e}")
     finally:
@@ -53,25 +56,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """স্টার্ট কমান্ড হ্যান্ডলার"""
     await update.message.reply_text(
         "👋 **স্বাগতম!**\n\n"
-        "আমি একটি মাল্টি-ফাংশনাল অল-ইন-ওয়ান বট।\n\n"
-        "🎬 **ইউটিউব ডাউনলোড:** যেকোনো YouTube লিংক পাঠাও।\n"
+        "আমি একটি অল-ইন-ওয়ান মিডিয়া ডাউনলোডার ও প্রসেসিং বট।\n\n"
+        "🎬 **ভিডিও/অডিও ডাউনলোড:** YouTube, Facebook, Instagram, Twitter/X, TikTok ইত্যাদির যেকোনো লিংক পাঠাও।\n"
         "🖼️ **ইমেজ প্রসেসিং:** যেকোনো ছবি পাঠাও ফিল্টার করার জন্য।"
     )
 
 
-async def handle_youtube_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ইউটিউব ভিডিও ডাউনলোডের মূল লজিক"""
+async def handle_media_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """YouTube, Facebook, Instagram, Twitter ইত্যাদি প্ল্যাটফর্মের ভিডিও ডাউনলোডের লজিক"""
     url = update.message.text.strip()
 
-    if not ("youtube.com" in url or "youtu.be" in url):
-        await update.message.reply_text("❌ এটি সঠিক YouTube লিংক নয়! অনুগ্রহ করে সঠিক লিংক পাঠাও।")
+    # সাধারণ URL ভ্যালিডেশন (যেকোনো বৈধ লিংকের জন্য)
+    if not (url.startswith("http://") or url.startswith("https://")):
+        await update.message.reply_text("❌ এটি সঠিক কোনো লিংক নয়! অনুগ্রহ করে একটি বৈধ URL পাঠাও।")
         return
 
     status_msg = await update.message.reply_text("⏳ **ভিডিও প্রসেস করা হচ্ছে...**\nঅনুগ্রহ করে অপেক্ষা করো।")
 
     file_path = None
     try:
-        # Render RAM বাঁচানোর জন্য অপটিমাইজড yt-dlp সেটিংস (সর্বোচ্চ 720p)
+        # Render-এ RAM বাঁচানো এবং YouTube IP Block এড়ানোর জন্য অপটিমাইজড yt-dlp সেটিংস
         ydl_opts = {
             'format': 'best[height<=720][ext=mp4]/bestvideo[height<=720]+bestaudio/best',
             'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
@@ -79,6 +83,13 @@ async def handle_youtube_download(update: Update, context: ContextTypes.DEFAULT_
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
+            # YouTube Bot Detection বাইপাস করার জন্য
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['ios', 'mweb', 'android']
+                }
+            }
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -88,12 +99,19 @@ async def handle_youtube_download(update: Update, context: ContextTypes.DEFAULT_
             base_name = os.path.splitext(filename)[0]
             if os.path.exists(f"{base_name}.mp4"):
                 file_path = f"{base_name}.mp4"
-            else:
+            elif os.path.exists(filename):
                 file_path = filename
+            else:
+                files = glob.glob(f"{DOWNLOAD_DIR}/*")
+                file_path = files[0] if files else None
 
-            title = info.get('title', 'YouTube Video')
+            title = info.get('title', 'Downloaded Video')
 
-        # ভিডিও সাইজ চেক (টেলিগ্রামের ফ্রি সীমা: ৫০ MB)
+        if not file_path or not os.path.exists(file_path):
+            await status_msg.edit_text("❌ ফাইলটি ডাউনলোড সফল হয়নি বা খুঁজে পাওয়া যায়নি।")
+            return
+
+        # ফাইল সাইজ চেক (টেলিগ্রাম ফ্রি বটের সীমা: ৫০ MB)
         file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
         if file_size_mb > 50:
             await status_msg.edit_text(
@@ -180,7 +198,7 @@ def main():
 
     # হ্যান্ডলার যুক্ত করা
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_youtube_download))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_media_download))
     app.add_handler(MessageHandler(filters.PHOTO, handle_image_processing))
 
     logger.info("বট চালু হচ্ছে...")
