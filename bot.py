@@ -129,7 +129,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     if action != "dl":
         return
 
-    format_type = data[1] # 'video' or 'audio'
+    format_type = data[1]  # 'video' or 'audio'
     msg_id = data[2]
     url = context.user_data.get(msg_id)
 
@@ -145,16 +145,17 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         ydl_opts = {
             'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
             'noplaylist': True,
-            'quiet': False,  # ডিবাগের জন্য True রাখা হয়েছে
-            'no_warnings': False,  # ওয়ার্নিং দেখার জন্য
+            'quiet': True,
+            'no_warnings': True,
             'ignoreerrors': True,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'extractor_args': {
                 'youtube': {
                     'player_client': ['android', 'ios', 'mweb'],
-                    'skip': ['hls', 'dash'],  # HLS এবং DASH স্কিপ করে সরাসরি ফরম্যাট ডাউনলোড
                 }
-            }
+            },
+            'format_sort': ['res:720', 'ext:mp4:m4a', 'codec:avc1', 'codec:mp4a'],
+            'compat_opts': ['no-live-chat', 'no-youtube-chapters'],
         }
 
         # কুকি ফাইল থাকলে যুক্ত করা (YouTube Bot Block বাইপাস করার জন্য)
@@ -172,15 +173,14 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             # YouTube এর নতুন ফরম্যাট সিস্টেমের সাথে সামঞ্জস্যপূর্ণ
             ydl_opts['format'] = 'bestvideo[height<=720][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=720][ext=mp4]/best'
-            ydl_opts['merge_output_format'] = 'mp4'
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            
+
             # ফাইল নাম সঠিকভাবে বের করা
             filename = ydl.prepare_filename(info)
             base_name = os.path.splitext(filename)[0]
-            
+
             if format_type == 'audio':
                 file_path = f"{base_name}.mp3"
             else:
@@ -192,7 +192,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                     if os.path.exists(test_path):
                         file_path = test_path
                         break
-                
+
                 # যদি না পাওয়া যায়, তাহলে ডিরেক্টরি থেকে ফাইল খোঁজা
                 if not file_path:
                     files = glob.glob(f"{DOWNLOAD_DIR}/*")
@@ -240,6 +240,13 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "❌ **ভিডিও ফরম্যাট পাওয়া যায়নি!**\n\n"
                 "YouTube তাদের ফরম্যাট পরিবর্তন করেছে। আমি অন্য ফরম্যাটে চেষ্টা করছি...\n"
                 "অনুগ্রহ করে আবার চেষ্টা করুন অথবা অন্য একটি ভিডিও দিয়ে চেক করুন।"
+            )
+        elif "Sign in to confirm" in error_msg or "bot" in error_msg.lower():
+            await query.edit_message_text(
+                "❌ **YouTube অ্যাক্সেস ব্লক করেছে!**\n\n"
+                "YouTube মনে করছে আপনি একটি বট। সমাধান:\n"
+                "1. cookies.txt ফাইল আপডেট করুন\n"
+                "2. অথবা কিছুক্ষণ পর আবার চেষ্টা করুন"
             )
         else:
             await query.edit_message_text(f"❌ **ডাউনলোড সমস্যা!**\n\nকারণ: `{error_msg[:150]}`")
