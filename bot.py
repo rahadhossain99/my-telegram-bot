@@ -1,4 +1,5 @@
 import os
+import random
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -10,6 +11,9 @@ logging.basicConfig(
 )
 
 TOKEN = os.environ.get('BOT_TOKEN')
+
+# আপলোড করা কুকি ফাইলগুলোর তালিকা
+COOKIE_FILES = ['cookie1.txt']
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -28,8 +32,8 @@ async def handle_youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     keyboard = [
         [
-            InlineKeyboardButton("🎬 Video", callback_data='video'),
-            InlineKeyboardButton("🎵 Audio MP3", callback_data='audio')
+            InlineKeyboardButton("🎬 Download Video", callback_data='video'),
+            InlineKeyboardButton("🎵 Download Audio (MP3)", callback_data='audio')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -50,14 +54,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     output_filename = "downloaded_media.%(ext)s"
 
-    # YouTube Bot Block Bypass Configuration
+    # র্যান্ডমলি কুকি ফাইল নির্বাচন (Cookie Rotation)
+    selected_cookie = random.choice(COOKIE_FILES)
+
     ydl_opts = {
+        'cookiefile': selected_cookie,
         'format': 'bestaudio/best' if download_type == 'audio' else 'best[filesize<45M]/worst',
         'outtmpl': output_filename,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         'extractor_args': {
             'youtube': {
-                'player_client': ['mweb', 'ios', 'android_vr']
+                'player_client': ['ios', 'android_vr', 'mweb']
             }
         }
     }
@@ -90,4 +97,3 @@ if __name__ == '__main__':
 
     print("Bot starting...")
     app.run_polling()
-    
