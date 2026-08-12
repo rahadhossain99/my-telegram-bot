@@ -55,15 +55,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     selected_cookie = random.choice(COOKIE_FILES)
 
-    # সর্বজনীন ফরম্যাট কনফিগারেশন (যা কোনো ফরম্যাট এরর দেবে না)
+    # PO Token ও ক্লায়েন্ট ব্লকিং বাইপাস করার জন্য সঠিক কনফিগারেশন
     ydl_opts = {
         'cookiefile': selected_cookie,
         'format': 'best',
         'outtmpl': output_filename,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android_vr', 'mweb']
+                'player_client': ['android', 'web']
             }
         }
     }
