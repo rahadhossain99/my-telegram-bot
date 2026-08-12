@@ -5,6 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 import yt_dlp
 
+# লগিং কনফিগারেশন
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -12,6 +13,7 @@ logging.basicConfig(
 
 TOKEN = os.environ.get('BOT_TOKEN')
 
+# আপলোড করা কুকি ফাইলের নাম
 COOKIE_FILES = ['cookie1.txt']
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -55,7 +57,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     selected_cookie = random.choice(COOKIE_FILES)
 
-    # সব ধরণের ভিডিও/মেডিয়ার জন্য ফ্লেক্সিবল ফরম্যাট রুলস
+    # yt-dlp কনফিগারেশন
     ydl_opts = {
         'cookiefile': selected_cookie,
         'format': 'bestaudio/best' if download_type == 'audio' else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
@@ -95,4 +97,5 @@ if __name__ == '__main__':
     app.add_handler(CallbackQueryHandler(button_callback))
 
     print("Bot starting...")
-    app.run_polling()
+    # drop_pending_updates=True এর মাধ্যমে আগের আটকে থাকা কনফ্লিক্টিং রিকোয়েস্টগুলো ক্লিয়ার হয়ে যাবে
+    app.run_polling(drop_pending_updates=True)
