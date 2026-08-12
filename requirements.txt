@@ -1,5 +1,6 @@
 python-telegram-bot
 yt-dlp
+static-ffmpeg
 Pillow
 opencv-python-headless
 numpy
